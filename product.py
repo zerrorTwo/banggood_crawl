@@ -49,6 +49,8 @@ def crawl_banggood_products(
         "price",
         "sku_properties",
         "description",
+        "image_urls",
+        "option_details",
     ]
 
     try:
@@ -81,6 +83,8 @@ def crawl_banggood_products(
                 price = "Price not found"
                 sku_properties = []
                 description = None
+                image_urls = []
+                option_details = []
 
                 # Extract product URL
                 try:
@@ -116,27 +120,7 @@ def crawl_banggood_products(
                     except Exception as e:
                         print(f"Could not find product title: {e}")
 
-                    # Extract price
-                    try:
-                        price_tag = wait.until(
-                            EC.presence_of_element_located(
-                                (
-                                    By.XPATH,
-                                    '//div[@class="product-newbie-price"]//div[@class="newbie-price"]',
-                                )
-                            )
-                        )
-                        price = price_tag.text.strip()
-                    except Exception:
-                        try:
-                            price_tag = driver.find_element(
-                                By.XPATH, '//span[contains(@class, "main-price")]'
-                            )
-                            price = price_tag.text.strip()
-                        except Exception:
-                            print("Could not find any price element.")
-
-                    # Extract SKU properties
+                    # Extract SKU properties and iterate through options
                     try:
                         product_blocks = driver.find_elements(
                             By.XPATH, '//div[contains(@class, "product-block")]'
@@ -154,52 +138,97 @@ def crawl_banggood_products(
                                 img_tags = block.find_elements(
                                     By.XPATH, './/a[contains(@class, "imgtag")]'
                                 )
-                                if img_tags:
-                                    sku_values = [
-                                        img_tag.get_attribute("title").strip()
-                                        for img_tag in img_tags
-                                    ]
-                                    active_value = next(
-                                        (
-                                            img_tag.get_attribute("title").strip()
-                                            for img_tag in img_tags
-                                            if "active"
-                                            in img_tag.get_attribute("class")
-                                        ),
-                                        sku_values[0] if sku_values else "Unknown",
-                                    )
-                                    sku_properties.append(
-                                        {
-                                            "sku_property": property_name,
-                                            "sku_values": sku_values,
-                                            "active_value": active_value,
-                                        }
-                                    )
-                                else:
-                                    text_tags = block.find_elements(
+                                option_elements = (
+                                    img_tags
+                                    if img_tags
+                                    else block.find_elements(
                                         By.XPATH, './/a[@href="javascript:;"]'
                                     )
-                                    sku_values = [
-                                        text_tag.get_attribute("title").strip()
-                                        for text_tag in text_tags
-                                        if text_tag.get_attribute("title")
-                                    ]
-                                    active_value = next(
-                                        (
-                                            text_tag.get_attribute("title").strip()
-                                            for text_tag in text_tags
-                                            if "active"
-                                            in text_tag.get_attribute("class")
-                                        ),
-                                        sku_values[0] if sku_values else "Unknown",
-                                    )
-                                    sku_properties.append(
-                                        {
-                                            "sku_property": property_name,
-                                            "sku_values": sku_values,
-                                            "active_value": active_value,
-                                        }
-                                    )
+                                )
+
+                                sku_values = [
+                                    el.get_attribute("title").strip()
+                                    for el in option_elements
+                                    if el.get_attribute("title")
+                                ]
+                                active_value = next(
+                                    (
+                                        el.get_attribute("title").strip()
+                                        for el in option_elements
+                                        if "active" in el.get_attribute("class")
+                                    ),
+                                    sku_values[0] if sku_values else "Unknown",
+                                )
+                                sku_properties.append(
+                                    {
+                                        "sku_property": property_name,
+                                        "sku_values": sku_values,
+                                        "active_value": active_value,
+                                    }
+                                )
+
+                                # Click through each option to get price and stock
+                                for el in option_elements:
+                                    option_name = el.get_attribute("title").strip()
+                                    if not option_name:
+                                        continue
+                                    try:
+                                        driver.execute_script(
+                                            "arguments[0].click();", el
+                                        )
+                                        time.sleep(random.uniform(1, 2))
+
+                                        # Extract price for this option
+                                        try:
+                                            price_tag = wait.until(
+                                                EC.presence_of_element_located(
+                                                    (
+                                                        By.XPATH,
+                                                        '//div[@class="product-newbie-price"]//div[@class="newbie-price"]',
+                                                    )
+                                                )
+                                            )
+                                            option_price = price_tag.text.strip()
+                                        except Exception:
+                                            try:
+                                                price_tag = driver.find_element(
+                                                    By.XPATH,
+                                                    '//span[contains(@class, "main-price")]',
+                                                )
+                                                option_price = price_tag.text.strip()
+                                            except Exception:
+                                                option_price = "Price not found"
+
+                                        # Extract stock for this option
+                                        try:
+                                            stock_tag = wait.until(
+                                                EC.presence_of_element_located(
+                                                    (
+                                                        By.XPATH,
+                                                        '//div[@data-spm="0000000Cr" and contains(@class, "pcs")]//em',
+                                                    )
+                                                )
+                                            )
+                                            stock = stock_tag.text.strip()
+                                        except Exception:
+                                            stock = "Stock not found"
+
+                                        option_details.append(
+                                            {
+                                                "option_name": option_name,
+                                                "price": option_price,
+                                                "stock": stock,
+                                            }
+                                        )
+                                        print(
+                                            f"Extracted option: {option_name}, Price: {option_price}, Stock: {stock}"
+                                        )
+                                    except Exception as e:
+                                        print(
+                                            f"Error clicking option {option_name}: {e}"
+                                        )
+                                        continue
+
                             except Exception as e:
                                 print(f"Error processing product block: {e}")
                                 continue
@@ -245,6 +274,27 @@ def crawl_banggood_products(
 
                     except Exception as e:
                         print(f"Error extracting SKU properties: {e}")
+
+                    # Use default price if no options were processed
+                    if not option_details:
+                        try:
+                            price_tag = wait.until(
+                                EC.presence_of_element_located(
+                                    (
+                                        By.XPATH,
+                                        '//div[@class="product-newbie-price"]//div[@class="newbie-price"]',
+                                    )
+                                )
+                            )
+                            price = price_tag.text.strip()
+                        except Exception:
+                            try:
+                                price_tag = driver.find_element(
+                                    By.XPATH, '//span[contains(@class, "main-price")]'
+                                )
+                                price = price_tag.text.strip()
+                            except Exception:
+                                print("Could not find any price element.")
 
                     # Extract product description
                     try:
@@ -316,6 +366,26 @@ def crawl_banggood_products(
                         print(f"Error extracting product description: {e}")
                         description = "Description not found"
 
+                    # Extract all image URLs from img src
+                    try:
+                        image_elements = wait.until(
+                            EC.presence_of_all_elements_located(
+                                (
+                                    By.XPATH,
+                                    '//ul[@data-spm="0000000W4" and contains(@class, "list cf")]//img[@data-spm="0000000Wa"]',
+                                )
+                            )
+                        )
+                        image_urls = [
+                            img.get_attribute("src").strip()
+                            for img in image_elements
+                            if img.get_attribute("src")
+                        ]
+                        print(f"Extracted {len(image_urls)} image URLs")
+                    except Exception as e:
+                        print(f"Error extracting image URLs: {e}")
+                        image_urls = []
+
                     product_info = {
                         "lv3_title": lv3_title,
                         "lv3_href": category_url,
@@ -326,6 +396,10 @@ def crawl_banggood_products(
                             sku_properties
                         ),  # Convert to string for CSV
                         "description": description,
+                        "image_urls": str(image_urls),  # Convert to string for CSV
+                        "option_details": str(
+                            option_details
+                        ),  # Convert to string for CSV
                     }
                     # Save product immediately
                     save_product_to_csv(product_info, output_csv_file, fieldnames)
